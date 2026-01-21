@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Education Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; background-color: #f4f6f8; color: #333; height: 100vh; overflow: hidden; }
+        
+        h2 { font-size: 1.2rem; margin: 0; }
+        h4 { margin: 0 0 5px 0; font-size: 0.9rem; color: #2c3e50; }
+        p, li { font-size: 0.8rem; }
+        
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 220px 1fr 1fr;
+            grid-template-rows: 50px 1fr 1fr;
+            height: 100vh; gap: 10px; padding: 10px; box-sizing: border-box;
+        }
+
+        .header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; background: #fff; padding: 0 15px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        .controls { grid-row: 2 / -1; background: white; padding: 15px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 20px; overflow-y: auto; }
+        
+        .chart-card { background: white; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+
+        .chart-wrapper { flex: 1; min-height: 0; width: 100%; }
+
+        .viz-1 { grid-column: 2; grid-row: 2; } 
+        .viz-2 { grid-column: 3; grid-row: 2; } 
+        .viz-3 { grid-column: 2; grid-row: 3; } 
+        .viz-4 { grid-column: 3; grid-row: 3; } 
+
+        input[type=range] { width: 100%; }
+
+        .tooltip { position: absolute; background: rgba(0,0,0,0.8); color: white; padding: 4px 8px; border-radius: 4px; pointer-events: none; opacity: 0; font-size: 11px; z-index: 10; }
+
+        circle { transition: all 0.3s ease; cursor: pointer; }
+        circle:hover { stroke: #333; stroke-width: 2px; }
+        .highlighted { fill: #e74c3c !important; r: 6px !important; opacity: 1 !important; }
+        .dimmed { opacity: 0.1 !important; }
+        
+        .axis text { font-size: 9px; }
+        .axis path, .axis line { stroke: #ddd; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <div class="header">
+        <h2>🌍 Global Education Insights</h2>
+        <div>Year: <strong id="year-display">2010</strong></div>
+    </div>
+
+    <div class="controls">
+        <div>
+            <h4>Time Travel</h4>
+            <input type="range" id="year-slider" min="1990" max="2020" value="2010" step="1">
+            <p style="margin-top:5px; color:#666;">Drag to see evolution.</p>
+        </div>
+        
+        <div>
+            <h4>Legend</h4>
+            <ul style="padding-left: 15px; margin: 5px 0;">
+                <li><strong>Top R:</strong> Spending vs Outcomes</li>
+                <li><strong>Bot L:</strong> Literacy vs University</li>
+                <li><strong>Bot R:</strong> Global Distribution</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="chart-card viz-1" id="viz-map">
+        <h4>1. Attainment by Region</h4>
+        <div class="chart-wrapper"></div>
+    </div>
+    <div class="chart-card viz-2" id="viz-spending">
+        <h4>2. The Spending Paradox</h4>
+        <div class="chart-wrapper"></div>
+    </div>
+    <div class="chart-card viz-3" id="viz-ladder">
+        <h4>3. Literacy</h4>
+        <div class="chart-wrapper"></div>
+    </div>
+    <div class="chart-card viz-4" id="viz-dist">
+        <h4>4. The Global Shift</h4>
+        <div class="chart-wrapper"></div>
+    </div>
+</div>
+
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+    const viewBoxWidth = 400;
+    const viewBoxHeight = 250;
+    const margin = {top: 10, right: 15, bottom: 30, left: 40};
+    
+    d3.csv("final_wdi_data_prepared.csv").then(function(data) {
+        data.forEach(d => {
+            d.Year = +d.Year;
+            d['SE.SEC.CUAT.UP.ZS'] = +d['SE.SEC.CUAT.UP.ZS']; 
+            d['SE.XPD.TOTL.GD.ZS'] = +d['SE.XPD.TOTL.GD.ZS']; 
+            d['SE.ADT.LITR.ZS'] = +d['SE.ADT.LITR.ZS'];       
+            d['SE.TER.CUAT.BA.ZS'] = +d['SE.TER.CUAT.BA.ZS']; 
+        });
+        initDashboard(data);
+    });
+
+    function initDashboard(allData) {
+        const svgSpending = createSvg("#viz-spending .chart-wrapper");
+        const svgLadder = createSvg("#viz-ladder .chart-wrapper");
+        const svgDist = createSvg("#viz-dist .chart-wrapper");
+        const svgRegion = createSvg("#viz-map .chart-wrapper");
+
+        const xSpend = d3.scaleLinear().domain([0, 10]).range([0, viewBoxWidth - margin.left - margin.right]);
+        const ySec = d3.scaleLinear().domain([0, 100]).range([viewBoxHeight - margin.top - margin.bottom, 0]);
+        
+        const xLit = d3.scaleLinear().domain([0, 100]).range([0, viewBoxWidth - margin.left - margin.right]);
+        const yTer = d3.scaleLinear().domain([0, 80]).range([viewBoxHeight - margin.top - margin.bottom, 0]);
+
+        const xDist = d3.scaleLinear().domain([0, 100]).range([0, viewBoxWidth - margin.left - margin.right]);
+        
+        // Y-Axis Scale for Viz 4
+        const yDist = d3.scaleLinear().domain([0, 40]).range([viewBoxHeight - margin.top - margin.bottom, 0]);
+        const histogramGenerator = d3.bin().domain(xDist.domain()).thresholds(xDist.ticks(20));
+
+        const xRegion = d3.scaleBand().range([0, viewBoxWidth - margin.left - margin.right]).padding(0.2);
+        const yRegion = d3.scaleLinear().domain([0, 100]).range([viewBoxHeight - margin.top - margin.bottom, 0]);
+
+        drawAxis(svgSpending, xSpend, ySec, "Govt Spending (% GDP)", "Secondary (%)");
+        drawAxis(svgLadder, xLit, yTer, "Literacy", "University (%)");
+        
+        // --- FIX WAS HERE: Passed yDist instead of null ---
+        drawAxis(svgDist, xDist, yDist, "Secondary Attainment (%)", "Count"); 
+        
+        drawAxis(svgRegion, xRegion, yRegion, "", "Avg %");
+
+        svgSpending.append("line").attr("x1", xSpend(4)).attr("x2", xSpend(4)).attr("y1", 0).attr("y2", viewBoxHeight).attr("stroke", "#eee").attr("stroke-dasharray", "3");
+        svgSpending.append("line").attr("x1", 0).attr("x2", viewBoxWidth).attr("y1", ySec(50)).attr("y2", ySec(50)).attr("stroke", "#eee").attr("stroke-dasharray", "3");
+
+        function update(selectedYear) {
+            d3.select("#year-display").text(selectedYear);
+            const currentData = allData.filter(d => d.Year == selectedYear);
+
+            // Viz 1
+            const regionData = Array.from(d3.group(currentData, d => d.Region), ([key, value]) => ({key, value: d3.mean(value, d => d['SE.SEC.CUAT.UP.ZS'])}));
+            xRegion.domain(regionData.map(d => d.key));
+            
+            svgRegion.select(".x-axis").call(d3.axisBottom(xRegion)).selectAll("text").attr("transform", "rotate(-15)").style("text-anchor", "end");
+
+            const bars = svgRegion.selectAll("rect").data(regionData, d => d.key);
+            bars.enter().append("rect")
+                .attr("x", d => xRegion(d.key))
+                .attr("width", xRegion.bandwidth())
+                .attr("y", viewBoxHeight - margin.bottom) 
+                .attr("height", 0)
+                .attr("fill", "#3498db")
+                .merge(bars)
+                .transition().duration(500)
+                .attr("y", d => yRegion(d.value || 0))
+                .attr("height", d => Math.max(0, (viewBoxHeight - margin.top - margin.bottom) - yRegion(d.value || 0)));
+            bars.exit().remove();
+
+            // Viz 2
+            renderCircles(svgSpending, currentData, d => xSpend(d['SE.XPD.TOTL.GD.ZS']), d => ySec(d['SE.SEC.CUAT.UP.ZS']), "#2c3e50");
+
+            // Viz 3
+            renderCircles(svgLadder, currentData, d => xLit(d['SE.ADT.LITR.ZS']), d => yTer(d['SE.TER.CUAT.BA.ZS']), "#e67e22");
+
+            // Viz 4
+            const validDistData = currentData
+                .map(d => d['SE.SEC.CUAT.UP.ZS'])
+                .filter(val => val !== null && !isNaN(val));
+
+            const bins = histogramGenerator(validDistData);
+            
+            const histBars = svgDist.selectAll("rect").data(bins);
+            histBars.enter().append("rect")
+                .attr("transform", d => `translate(${xDist(d.x0)}, ${viewBoxHeight - margin.bottom})`)
+                .attr("width", d => Math.max(1, xDist(d.x1) - xDist(d.x0) - 1))
+                .attr("height", 0)
+                .attr("fill", "#27ae60")
+                .attr("opacity", 0.6)
+                .merge(histBars)
+                .transition().duration(500)
+                .attr("transform", d => `translate(${xDist(d.x0)}, ${yDist(d.length)})`)
+                .attr("width", d => Math.max(1, xDist(d.x1) - xDist(d.x0) - 1))
+                .attr("height", d => Math.max(0, (viewBoxHeight - margin.top - margin.bottom) - yDist(d.length)));
+            histBars.exit().remove();
+        }
+
+        d3.select("#year-slider").on("input", function() { update(this.value); });
+        update(2010);
+    }
+
+    function createSvg(selector) {
+        return d3.select(selector)
+            .append("svg")
+            .attr("preserveAspectRatio", "xMidYMid meet") 
+            .attr("viewBox", `0 0 ${viewBoxWidth} ${viewBoxHeight}`) 
+            .style("width", "100%")
+            .style("height", "100%")
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+    }
+
+    function drawAxis(svg, xScale, yScale, xLabel, yLabel) {
+        svg.append("g").attr("class", "x-axis").attr("transform", `translate(0,${viewBoxHeight - margin.top - margin.bottom})`).call(d3.axisBottom(xScale));
+        if(yScale) svg.append("g").call(d3.axisLeft(yScale));
+        
+        svg.append("text").attr("x", (viewBoxWidth - margin.left)/2).attr("y", viewBoxHeight - 5).style("text-anchor", "middle").text(xLabel).style("font-size", "10px").style("fill", "#777");
+        svg.append("text").attr("transform", "rotate(-90)").attr("y", -30).attr("x", -(viewBoxHeight/2)).style("text-anchor", "middle").text(yLabel).style("font-size", "10px").style("fill", "#777");
+    }
+
+    function renderCircles(svg, data, xAcc, yAcc, color) {
+        const circles = svg.selectAll("circle").data(data, d => d['Country Name']);
+        circles.enter().append("circle")
+            .attr("r", 4)
+            .attr("fill", color)
+            .attr("opacity", 0.6)
+            .on("mouseover", function(event, d) {
+                d3.select("#tooltip").style("opacity", 1)
+                  .html(`<strong>${d['Country Name']}</strong><br>${d.Year}`)
+                  .style("left", (event.pageX + 10) + "px").style("top", (event.pageY - 20) + "px");
+                d3.selectAll("circle").classed("dimmed", true);
+                d3.selectAll("circle").filter(c => c['Country Name'] === d['Country Name']).classed("dimmed", false).classed("highlighted", true);
+            })
+            .on("mouseout", function() {
+                d3.select("#tooltip").style("opacity", 0);
+                d3.selectAll("circle").classed("dimmed", false).classed("highlighted", false);
+            })
+            .merge(circles)
+            .transition().duration(500)
+            .attr("cx", xAcc).attr("cy", yAcc);
+        circles.exit().remove();
+    }
+</script>
+</body>
+</html>
